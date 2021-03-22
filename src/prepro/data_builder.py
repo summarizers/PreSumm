@@ -22,6 +22,11 @@ from prepro.utils import _get_word_ngrams
 
 import xml.etree.ElementTree as ET
 
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+import corenlp
+
 nyt_remove_words = ["photo", "graph", "chart", "map", "table", "drawing"]
 
 
@@ -437,3 +442,159 @@ def _format_xsum_to_lines(params):
             tgt.append(sent.split())
         return {'src': source, 'tgt': tgt}
     return None
+
+
+def jsonls_to_dfs(from_dir, to_dir):
+    jsonl_paths = get_file_paths(from_dir, suffix='.jsonl')
+    os.makedirs(to_dir , exist_ok=True)
+
+    for jsonl_path in tqdm(jsonl_paths):
+        filename = os.path.splitext(os.path.basename(jsonl_path))[0]  ## extract file name
+        df = _jsonl_to_df(jsonl_path)
+        # df_selected = df[['title', 'text', 'summary']]
+        # print(df.head())
+        df.to_pickle(f"{to_dir}/{filename}_df.pickle")
+
+def _jsonl_to_df(path):
+    with open(path, 'r') as file:
+        json_list = list(file)
+
+        lines = []
+        for json_str in json_list:
+            line = json.loads(json_str)
+            lines.append(line)
+
+    df = pd.DataFrame(lines)
+    return df
+
+def get_file_paths(dir='./', suffix: str=''):
+    file_paths = []
+    filename_pattern = f'*{suffix}' if suffix != '' \
+                    else '*' 
+
+    file_paths = glob.glob(os.path.join(dir, filename_pattern))
+    return file_paths
+
+
+def dfs_to_jsons(from_dir, to_dir, n_cpus=2):
+    df_paths = get_file_paths(from_dir, suffix='df.pickle')
+    os.makedirs(to_dir, exist_ok=True)
+    
+
+        # pool = Pool(args.n_cpus)
+    # for df in pool.imap_unordered(_jsonl_to_df, jsonl_paths):
+    #     print(df.head())
+    # pool.close()
+    # pool.join()
+
+    
+    for df_file in df_paths:
+        print(df_file)
+        filename = os.path.splitext(os.path.basename(df_file))[0]  ## extract file name
+        df = pd.read_pickle(df_file)
+        _df_to_jsons(df, filename, to_dir, n_cpus)
+
+def _df_to_jsons(df, prefix, to_dir, n_cpus):
+
+    NUM_DOCS_IN_ONE_FILE = 1000
+    num_split = len(df) // NUM_DOCS_IN_ONE_FILE
+    idx_list = list(range(0, num_split))
+    num_of_digits = len(str(len(idx_list)))
+
+    file_name_list = []
+    for idx in idx_list:
+        ## 정렬을 위해 앞에 0 채워주기
+        idx_str = (num_of_digits - len(str(idx)))*'0' + str(idx)
+        file_name = f'{to_dir}/{prefix}_{idx_str}.json'
+        file_name_list.append(file_name)
+        
+    dfs_split = np.array_split(df, num_split)
+    
+    print(f"----------{prefix} start({num_split} files)------------")
+    # with Pool(processes=n_cpus) as pool:
+    pool = Pool(n_cpus)
+    pool.imap_unordered(_df_to_json, zip(dfs_split, idx_list, file_name_list))
+    pool.close()
+    pool.join()
+    # for params in tqdm(zip(dfs_split, idx_list, file_name_list)):
+    #     _df_to_json(params)
+    print(f"----------{prefix} end({num_split} files)------------")
+
+def _df_to_json(params):
+    df, idx, file_name = params
+    end_idx = idx + len(df)
+    print(f"Start {file_name}")
+
+    with corenlp.client.CoreNLPClient(annotators="tokenize ssplit".split()) as tokenizer:
+        
+        json_list = []
+        for i, row in df.iloc[idx:end_idx].iterrows():
+            tokenized_sents = tokenizer.annotate(row['text'])
+            original_sents_list = []
+            for sent in tokenized_sents.sentence:
+                original_sents_list.append([token.word for token in sent.token])
+
+            tokenized_sents = tokenizer.annotate(row['title'])
+            query_sents_list = []
+            for sent in tokenized_sents.sentence:
+                query_sents_list.append([token.word for token in sent.token])
+
+            tokenized_sents = tokenizer.annotate(row['summary'])
+            summary_sents_list = []
+            for sent in tokenized_sents.sentence:
+                summary_sents_list.append([token.word for token in sent.token])
+
+            json_list.append({'src': original_sents_list,
+                            'query': query_sents_list,
+                            'tgt': summary_sents_list
+            })
+
+        json_string = json.dumps(json_list, indent=4, ensure_ascii=False)
+        #print(json_string)
+        with open(file_name, 'w') as json_file:
+            json_file.write(json_string)
+        
+        print(f"End {file_name}")
+
+        return True
+
+
+def jsonl_to_bert(args):#, from_dir, to_dir, temp_dir='/temp', log_file='/log.log', n_cpus=2, target_summary_sent=None):
+    # Make dataset folders
+    dataset_name = args.dataset # 'newsroom'
+    dataset_root_dir = os.path.abspath( os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'datasets'))
+    print(dataset_root_dir)
+    dataset_dir = os.path.join(dataset_root_dir, dataset_name)
+    os.makedirs(dataset_dir , exist_ok=True)
+
+    data_dir_names = ['raw', 'df', 'json', 'bert']
+    data_dirs_dict = {data_dir_name: os.path.join(dataset_dir, data_dir_name) for data_dir_name in data_dir_names}
+    for data_dir in data_dirs_dict.values():
+        os.makedirs(data_dir, exist_ok=True)
+
+    # Transform
+    jsonls_to_dfs(data_dirs_dict['raw'], data_dirs_dict['df'])
+    dfs_to_jsons(data_dirs_dict['df'], data_dirs_dict['json'], args.n_cpus)
+    # json_to_bert(data_dirs_dict['json'], data_dirs_dict['bert'])
+
+
+#     for sent in ann.sentence:
+#         print([token.word for token in sent.token])
+    
+
+#         ## make json file
+#         # 동일한 파일명 존재하면 덮어쓰는게 아니라 ignore됨에 따라 폴더 내 삭제 후 만들어주기
+#         json_data_dir = f"{temp_dir}/{data_type}"
+#         make_or_initial_dir(json_data_dir)
+#         create_json_files(df, data_type=data_type, target_summary_sent=target_summary_sent, path=json_data_dir)
+        
+#         ## Convert json to bert.pt files
+#         bert_data_dir = f"{to_dir}/{data_type}"
+#         make_or_initial_dir(bert_data_dir)
+        
+#         os.system(f"python preprocess.py"
+#             + f" -mode format_to_bert -dataset {data_type}"
+#             + f" -raw_path {json_data_dir}"
+#             + f" -save_path {bert_data_dir}"
+#             + f" -log_file {log_file}"
+#             + f" -lower -n_cpus {n_cpus}")
