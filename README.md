@@ -119,7 +119,7 @@ replacing `/path/to/` with the path to where you saved the `stanford-corenlp-ful
 python preprocess.py -mode tokenize -raw_path RAW_PATH -save_path TOKENIZED_PATH
 ```
 
-* `RAW_PATH` is the directory containing story files (`../raw_stories`), `JSON_PATH` is the target directory to save the generated json files (`../merged_stories_tokenized`)
+* `RAW_PATH` is the directory containing story files (`../raw_stories`), `TOKENIZED_PATH` is the target directory to save the generated json files (`../merged_stories_tokenized`)
 
 
 ####  Step 4. Format to Simpler Json Files
@@ -136,6 +136,31 @@ python preprocess.py -mode format_to_bert -raw_path JSON_PATH -save_path BERT_DA
 ```
 
 * `JSON_PATH` is the directory containing json files (`../json_data`), `BERT_DATA_PATH` is the target directory to save the generated binary files (`../bert_data`)
+
+### Option 3: Process Other data(jsonl)
+
+### Setting for using Stanford CoreNLP(In shell)
+```
+# Setting Stanford CoreNLP
+cd ~
+wget http://nlp.stanford.edu/software/stanford-corenlp-4.2.0.zip
+unzip stanford-corenlp-4.2.0.zip && cd stanford-corenlp-4.2.0
+pip install -U https://github.com/stanfordnlp/python-stanford-corenlp/archive/master.zip
+
+# Setup Environment
+export CLASSPATH="~/Project/summary_ext/src/prepro/stanford-corenlp-4.2.0/stanford-corenlp-4.2.0.jar"
+
+```
+
+### Install required libraries for preprocessing(In shell)
+```
+pip install -r requirements_prepro.txt
+```
+
+### Run(jsonl_to_df)
+```
+python preprocess.py -mode jsonl_to_bert -dataset newsroom -n_cpus 8
+```
 
 ## Model Training
 
