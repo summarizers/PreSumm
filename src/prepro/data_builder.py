@@ -27,6 +27,16 @@ import pandas as pd
 from tqdm import tqdm
 import corenlp
 
+# import stanza
+# CORENLP_FOLDER = '/home/uoneway/stanford-corenlp-4.2.0'
+# stanza.install_corenlp(dir=CORENLP_FOLDER)
+# stanza.download_corenlp_models(model='english', version='4.2.0')
+# from stanza.server import CoreNLPClient
+# stanza.download('en', processors='tokenize')
+# client = stanza.Pipeline('en', processors='tokenize')  # , use_gpu=False
+
+# client = None
+
 nyt_remove_words = ["photo", "graph", "chart", "map", "table", "drawing"]
 
 
@@ -476,92 +486,110 @@ def get_file_paths(dir='./', suffix: str=''):
     return file_paths
 
 
-def dfs_to_jsons(from_dir, to_dir, n_cpus=2):
+def dfs_to_jsons(from_dir, to_dir, n_cpus):
     df_paths = get_file_paths(from_dir, suffix='df.pickle')
     os.makedirs(to_dir, exist_ok=True)
-    
 
-        # pool = Pool(args.n_cpus)
-    # for df in pool.imap_unordered(_jsonl_to_df, jsonl_paths):
-    #     print(df.head())
-    # pool.close()
-    # pool.join()
+    # n_cpus의 반 만큼 CoreNLP 서버 가동
+    clients = [corenlp.CoreNLPClient(annotators=['tokenize','ssplit'], max_char_length=200000, 
+            endpoint=f"http://localhost:900{port}") 
+            for port in range(n_cpus // 2)]
 
-    
     for df_file in df_paths:
         print(df_file)
         filename = os.path.splitext(os.path.basename(df_file))[0]  ## extract file name
         df = pd.read_pickle(df_file)
-        _df_to_jsons(df, filename, to_dir, n_cpus)
+        _df_to_jsons(df, filename, to_dir, n_cpus, clients)
 
-def _df_to_jsons(df, prefix, to_dir, n_cpus):
+    for client in clients:
+        client.stop()
+
+def _df_to_jsons(df, prefix, to_dir, n_cpus, clients):
 
     NUM_DOCS_IN_ONE_FILE = 1000
-    num_split = len(df) // NUM_DOCS_IN_ONE_FILE
-    idx_list = list(range(0, num_split))
-    num_of_digits = len(str(len(idx_list)))
+    first_row_idx_list = list(range(0, len(df), NUM_DOCS_IN_ONE_FILE))
+    digits_num = len(str(len(df)))
+    client_list = clients * ((len(first_row_idx_list) // len(clients)) + 1)
 
+    df_list = []
     file_name_list = []
-    for idx in idx_list:
-        ## 정렬을 위해 앞에 0 채워주기
-        idx_str = (num_of_digits - len(str(idx)))*'0' + str(idx)
-        file_name = f'{to_dir}/{prefix}_{idx_str}.json'
+    for i, first_row_idx in enumerate(first_row_idx_list):
+
+        if i == len(first_row_idx_list) - 1:  # last element
+            last_row_idx = len(df)
+            df_list.append(df[first_row_idx:])
+        else:
+            last_row_idx = first_row_idx + NUM_DOCS_IN_ONE_FILE
+            df_list.append(df[first_row_idx : last_row_idx])
+
+        ## 정렬을 위해 파일이름 앞에 0 채워주기
+        start_row_idx_str = (digits_num - len(str(first_row_idx)))*'0' + str(first_row_idx)
+        last_row_idx_str = (digits_num - len(str(last_row_idx - 1)))*'0' + str(last_row_idx - 1)
+        file_name = f'{to_dir}/{prefix}_{start_row_idx_str}_{last_row_idx_str}.json'
         file_name_list.append(file_name)
-        
-    dfs_split = np.array_split(df, num_split)
     
-    print(f"----------{prefix} start({num_split} files)------------")
+    print(f"----------{prefix} start({len(first_row_idx_list)} files)------------")
     # with Pool(processes=n_cpus) as pool:
     pool = Pool(n_cpus)
-    pool.imap_unordered(_df_to_json, zip(dfs_split, idx_list, file_name_list))
+    port_idx = list(range(n_cpus))
+    for result in pool.imap_unordered(_df_to_json, zip(df_list, file_name_list, client_list)):  # 길이가 작은거에 맞춰서 중단됨.
+        print(result)
     pool.close()
     pool.join()
     # for params in tqdm(zip(dfs_split, idx_list, file_name_list)):
     #     _df_to_json(params)
-    print(f"----------{prefix} end({num_split} files)------------")
+    print(f"----------{prefix} end({len(first_row_idx_list)} files)------------")
 
 def _df_to_json(params):
-    df, idx, file_name = params
-    end_idx = idx + len(df)
+    df, file_name, client = params
     print(f"Start {file_name}")
 
-    with corenlp.client.CoreNLPClient(annotators="tokenize ssplit".split()) as tokenizer:
-        
-        json_list = []
-        for i, row in df.iloc[idx:end_idx].iterrows():
-            tokenized_sents = tokenizer.annotate(row['text'])
+    # with corenlp.CoreNLPClient(annotators=['tokenize','ssplit'], max_char_length=200000, endpoint=f"http://localhost:900{port}",) as client:  # , be_quiet=False , timeout=15000 
+    # with CoreNLPClient(annotators=['tokenize','ssplit'], max_char_length=200000, threads=8, memory="8G", timeout=15000) as client:  # , be_quiet=False
+    # global client
+
+    json_list = []
+    for i, row in df.iterrows():  # df.iloc[idx:end_idx].iterrows():
+        text_len = len(row['text'])
+        if text_len > 100000:
+            print(f'Request is too long: {text_len} characters. Max length is 100000 characters.')
+            continue
+        try:
+            tokenized_sents = client.annotate(row['text'])
             original_sents_list = []
             for sent in tokenized_sents.sentence:
                 original_sents_list.append([token.word for token in sent.token])
 
-            tokenized_sents = tokenizer.annotate(row['title'])
+            tokenized_sents = client.annotate(row['title'])
             query_sents_list = []
             for sent in tokenized_sents.sentence:
                 query_sents_list.append([token.word for token in sent.token])
 
-            tokenized_sents = tokenizer.annotate(row['summary'])
+            tokenized_sents = client.annotate(row['summary'])
             summary_sents_list = []
             for sent in tokenized_sents.sentence:
                 summary_sents_list.append([token.word for token in sent.token])
 
-            json_list.append({'src': original_sents_list,
-                            'query': query_sents_list,
-                            'tgt': summary_sents_list
-            })
+        except Exception as e:
+            print(f'{file_name} 처리 중 에러 발생 \n{e}')
+            continue
 
-        json_string = json.dumps(json_list, indent=4, ensure_ascii=False)
-        #print(json_string)
-        with open(file_name, 'w') as json_file:
-            json_file.write(json_string)
-        
-        print(f"End {file_name}")
+        json_list.append({'src': original_sents_list,
+                        'query': query_sents_list,
+                        'tgt': summary_sents_list
+        })
 
-        return True
+    json_string = json.dumps(json_list, indent=4, ensure_ascii=False)
+    #print(json_string)
+    with open(file_name, 'w') as json_file:
+        json_file.write(json_string)
+
+    return f"End {file_name}"
 
 
-def jsonl_to_bert(args):#, from_dir, to_dir, temp_dir='/temp', log_file='/log.log', n_cpus=2, target_summary_sent=None):
+def jsonl_to_bert(args):
     # Make dataset folders
-    dataset_name = args.dataset # 'newsroom'
+    dataset_name = args.dataset
     dataset_root_dir = os.path.abspath( os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'datasets'))
     print(dataset_root_dir)
     dataset_dir = os.path.join(dataset_root_dir, dataset_name)
@@ -575,6 +603,7 @@ def jsonl_to_bert(args):#, from_dir, to_dir, temp_dir='/temp', log_file='/log.lo
     # Transform
     jsonls_to_dfs(data_dirs_dict['raw'], data_dirs_dict['df'])
     dfs_to_jsons(data_dirs_dict['df'], data_dirs_dict['json'], args.n_cpus)
+
     # json_to_bert(data_dirs_dict['json'], data_dirs_dict['bert'])
 
 
