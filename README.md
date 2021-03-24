@@ -137,29 +137,39 @@ python preprocess.py -mode format_to_bert -raw_path JSON_PATH -save_path BERT_DA
 
 * `JSON_PATH` is the directory containing json files (`../json_data`), `BERT_DATA_PATH` is the target directory to save the generated binary files (`../bert_data`)
 
-### Option 3: Process Other data(jsonl)
+### Option 3: Process your own data(jsonl)
 
-### Setting for using Stanford CoreNLP(In shell)
+####  Step 1. Download and move the jsonl file to `datasets/YOUR_DATASET_NAME/raw`
+- [CORNELL NEWSROOM](https://lil.nlp.cornell.edu/newsroom/download/index.html)
+
+####  Step 2. Setting for using Stanford CoreNLP
+- [Stanford CoreNLP](https://stanfordnlp.github.io/CoreNLP/download.html)
+- [Stanford CoreNLP Python Interface](https://github.com/stanfordnlp/python-stanford-corenlp)
 ```
 # Setting Stanford CoreNLP
 cd ~
 wget http://nlp.stanford.edu/software/stanford-corenlp-4.2.0.zip
 unzip stanford-corenlp-4.2.0.zip && cd stanford-corenlp-4.2.0
-pip install -U https://github.com/stanfordnlp/python-stanford-corenlp/archive/master.zip
+pip install-U stanford-corenlp
 
-# Setup Environment
-export CLASSPATH="~/Project/summary_ext/src/prepro/stanford-corenlp-4.2.0/stanford-corenlp-4.2.0.jar"
+export CORENLP_HOME="~/stanford-corenlp-4.2.0"
 
-```
-
-### Install required libraries for preprocessing(In shell)
-```
+# Install required libraries for preprocessing
 pip install -r requirements_prepro.txt
 ```
 
-### Run(jsonl_to_df)
+####  Step 3. Processing(jsonl_to_df)
+- This process run the local server for CoreNLP process(tokenizer) half the number of n_cpus.   
+So set the `-n_cpus` value below than (the number of your cpu core) * 2/3.
 ```
-python preprocess.py -mode jsonl_to_bert -dataset newsroom -n_cpus 8
+# Step by step
+python preprocess.py -mode jsonls_to_dfs -dataset YOUR_DATASET_NAME -n_cpus CPU_NUM
+python preprocess.py -mode dfs_to_jsons -dataset YOUR_DATASET_NAME -n_cpus CPU_NUM
+```
+Or
+```
+# Do it all at once
+python preprocess.py -mode jsonl_to_bert -dataset YOUR_DATASET_NAME -n_cpus CPU_NUM
 ```
 
 ## Model Training
