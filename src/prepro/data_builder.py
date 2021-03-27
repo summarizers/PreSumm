@@ -234,23 +234,31 @@ class BertData():
         self.cls_vid = self.tokenizer.vocab[self.cls_token]
         self.pad_vid = self.tokenizer.vocab[self.pad_token]
 
-    def preprocess(self, src, tgt, sent_labels, use_bert_basic_tokenizer=False, is_test=False):
+    def preprocess(self, query, src, tgt, sent_labels, use_bert_basic_tokenizer=False, is_test=False, seg_embedding_type=0):
 
         if ((not is_test) and len(src) == 0):
             return None
+        
+        assert len(query) == 1
+        src = query + src
+        sent_labels = [_ + 1 for _ in sent_labels]
 
-        original_src_txt = [' '.join(s) for s in src]
+        original_src_txt = [' '.join(s) for s in src] # original_src_txt: list of str(each sentence) 
 
-        idxs = [i for i, s in enumerate(src) if (len(s) > self.args.min_src_ntokens_per_sent)]
+        idxs = [i for i, s in enumerate(src) if (len(s) > self.args.min_src_ntokens_per_sent) or (i == 0)] # 너무 짧은 문장은 제외
+            # src 에 있는 각각의 문장은 하나의 문서에 부분인데, 이렇게 지워도 무방한가?
 
-        _sent_labels = [0] * len(src)
+        # sent_labels: list of sentence id
+        # _sent_labels: list of [0 or 1], "1" indicates the sentence in summary
+        _sent_labels = [0] * len(src) # for what 
         for l in sent_labels:
             _sent_labels[l] = 1
 
-        src = [src[i][:self.args.max_src_ntokens_per_sent] for i in idxs]
+        src = [src[i][:self.args.max_src_ntokens_per_sent] for i in idxs] # truncate sentence by max_arc_ntokens_per_sent
         sent_labels = [_sent_labels[i] for i in idxs]
         src = src[:self.args.max_src_nsents]
         sent_labels = sent_labels[:self.args.max_src_nsents]
+
 
         if ((not is_test) and len(src) < self.args.min_src_nsents):
             return None
@@ -262,14 +270,42 @@ class BertData():
 
         src_subtokens = [self.cls_token] + src_subtokens + [self.sep_token]
         src_subtoken_idxs = self.tokenizer.convert_tokens_to_ids(src_subtokens)
-        _segs = [-1] + [i for i, t in enumerate(src_subtoken_idxs) if t == self.sep_vid]
-        segs = [_segs[i] - _segs[i - 1] for i in range(1, len(_segs))]
+
+
+        ## segments_ids
+        _segs = [-1] + [i for i, t in enumerate(src_subtoken_idxs) if t == self.sep_vid] # _segs: [sep] token index list
+        segs = [_segs[i] - _segs[i - 1] for i in range(1, len(_segs))] # num of tokens in a sent
         segments_ids = []
-        for i, s in enumerate(segs):
-            if (i % 2 == 0):
-                segments_ids += s * [0]
-            else:
-                segments_ids += s * [1]
+
+        if seg_embedding_type == 0:
+            for i, s in enumerate(segs):
+                
+                if (i % 2 == 0):
+                    segments_ids += s * [0]
+                else:
+                    segments_ids += s * [1]
+        elif seg_embedding_type == 1:
+
+            for i, s in enumerate(segs):
+                if i == 0:
+                    segments_ids += s * [2]
+                
+                if (i % 2 == 0):
+                    segments_ids += s * [0]
+                else:
+                    segments_ids += s * [1]
+        elif seg_embedding_type == 2:
+
+            for i, s in enumerate(segs):
+                if i == 0:
+                    segments_ids += s * [0]
+                else:
+                    segments_ids += s * [1]
+        else:
+            raise Exception()
+        
+
+
         cls_ids = [i for i, t in enumerate(src_subtoken_idxs) if t == self.cls_vid]
         sent_labels = sent_labels[:len(cls_ids)]
 
@@ -601,8 +637,63 @@ def jsonl_to_bert(args):
         os.makedirs(data_dir, exist_ok=True)
 
     # Transform
-    jsonls_to_dfs(data_dirs_dict['raw'], data_dirs_dict['df'])
-    dfs_to_jsons(data_dirs_dict['df'], data_dirs_dict['json'], args.n_cpus)
+    # jsonls_to_dfs(data_dirs_dict['raw'], data_dirs_dict['df'])
+    # dfs_to_jsons(data_dirs_dict['df'], data_dirs_dict['json'], args.n_cpus)
+    jsons_to_berts(data_dirs_dict['json'], data_dirs_dict['bert'], args)
+
+from pathlib import Path
+def jsons_to_berts(from_dir, to_dir, args):
+
+    from_dir = Path(from_dir)
+    for json_p in from_dir.glob('*.json'):
+        bert_p = json_p.with_suffix('.bert.pt')
+        _json_to_bert(json_p, bert_p, args)
+        
+
+def _json_to_bert(json_file, bert_file, args):
+    # is_test = corpus_type == 'test'
+    is_test = False
+    if "test" in json_file.stem:
+        is_test = True
+
+    if (os.path.exists(bert_file)):
+        logger.info('Ignore %s' % bert_file)
+        return
+
+    bert = BertData(args)
+    logger.info('Processing %s' % json_file)
+    with open(json_file, 'r') as f:
+        jobs = json.load(f)
+
+    datasets = []
+    for d in jobs:
+        query, source, tgt = d['query'], d['src'], d['tgt']
+
+        sent_labels = greedy_selection(source[:args.max_src_nsents], tgt, 3)
+        if (args.lower):
+            query = [' '.join(s).lower().split() for s in query]
+            source = [' '.join(s).lower().split() for s in source]
+            tgt = [' '.join(s).lower().split() for s in tgt]
+
+        b_data = bert.preprocess(query, source, tgt, sent_labels, use_bert_basic_tokenizer=args.use_bert_basic_tokenizer,
+                                 is_test=is_test, seg_embedding_type=args.seg_embedding_type)
+        # b_data = bert.preprocess(source, tgt, sent_labels, use_bert_basic_tokenizer=args.use_bert_basic_tokenizer)
+
+        if (b_data is None):
+            continue
+        src_subtoken_idxs, sent_labels, tgt_subtoken_idxs, segments_ids, cls_ids, src_txt, tgt_txt = b_data
+        b_data_dict = {"src": src_subtoken_idxs, "tgt": tgt_subtoken_idxs,
+                       "src_sent_labels": sent_labels, "segs": segments_ids, 'clss': cls_ids,
+                       'src_txt': src_txt, "tgt_txt": tgt_txt}
+        datasets.append(b_data_dict)
+    logger.info('Processed instances %d' % len(datasets))
+    logger.info('Saving to %s' % save_file)
+    torch.save(datasets, save_file)
+    datasets = []
+    gc.collect()
+
+
+#     json
 
     # json_to_bert(data_dirs_dict['json'], data_dirs_dict['bert'])
 

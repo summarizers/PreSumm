@@ -67,6 +67,8 @@ if __name__ == '__main__':
 
     parser.add_argument('-n_cpus', default=2, type=int)
 
+    #custom options
+    parser.add_argument('-seg_embedding_type', default=0, type=int)
 
     args = parser.parse_args()
     init_logger(args.log_file)
