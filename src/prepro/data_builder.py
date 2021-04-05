@@ -761,7 +761,39 @@ def jsonl_to_bert(args):
 
 
 from pathlib import Path
-def jsons_to_berts(from_dir, to_dir, args):
+
+
+def json_to_bert(args):
+
+    dataset_name = args.dataset
+    dataset_root_dir = os.path.abspath(
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "datasets"
+        )
+    )
+    print(dataset_root_dir)
+    dataset_dir = os.path.join(dataset_root_dir, dataset_name)
+    os.makedirs(dataset_dir, exist_ok=True)
+
+    data_dir_names = ["raw", "df", "json", "bert"]
+    data_dirs_dict = {
+        data_dir_name: os.path.join(dataset_dir, data_dir_name)
+        for data_dir_name in data_dir_names
+    }
+    for data_dir in data_dirs_dict.values():
+        os.makedirs(data_dir, exist_ok=True)
+
+    # Transform
+    # jsonls_to_dfs(data_dirs_dict['raw'], data_dirs_dict['df'])
+    # dfs_to_jsons(data_dirs_dict['df'], data_dirs_dict['json'], args.n_cpus)
+    # json_to_bert(data_dirs_dict["json"], data_dirs_dict["bert"], args)
+
+    from_dir = Path(data_dirs_dict["json"])
+    json_p_list = [_ for _ in from_dir.glob("*.json")]
+    for json_p in tqdm(json_p_list):
+        filename = json_p.name
+        bert_p = Path(data_dirs_dict["bert"]) / filename
+        bert_p = bert_p.with_suffix(".bert.pt")
 
         _json_to_bert(json_p, bert_p, args)
 
