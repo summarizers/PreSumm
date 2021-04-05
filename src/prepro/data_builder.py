@@ -266,10 +266,12 @@ class BertData:
 
         if (not is_test) and len(src) == 0:
             return None
-        
-        assert len(query) == 1
+
+        if len(query) == 0:
+            return None
+        len_query = len(query)
         src = query + src
-        sent_labels = [_ + 1 for _ in sent_labels]
+        sent_labels = [_ + len_query for _ in sent_labels]
 
         original_src_txt = [
             " ".join(s) for s in src
@@ -325,17 +327,18 @@ class BertData:
         elif seg_embedding_type == 1:
 
             for i, s in enumerate(segs):
-                if i == 0:
+                if i < len_query:
                     segments_ids += s * [2]
-                
-                if (i % 2 == 0):
+                    continue
+
+                if i % 2 == 0:
                     segments_ids += s * [0]
                 else:
                     segments_ids += s * [1]
         elif seg_embedding_type == 2:
 
             for i, s in enumerate(segs):
-                if i == 0:
+                if i < len_query:
                     segments_ids += s * [0]
                 else:
                     segments_ids += s * [1]
