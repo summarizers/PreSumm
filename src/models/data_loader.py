@@ -29,13 +29,13 @@ class Batch(object):
             tgt = torch.tensor(self._pad(pre_tgt, 0))
 
             segs = torch.tensor(self._pad(pre_segs, 0))
-            mask_src = 1 - (src == 0)
-            mask_tgt = 1 - (tgt == 0)
+            mask_src = torch.logical_not((src == 0))
 
+            mask_tgt = torch.logical_not((tgt == 0))
 
             clss = torch.tensor(self._pad(pre_clss, -1))
             src_sent_labels = torch.tensor(self._pad(pre_src_sent_labels, 0))
-            mask_cls = 1 - (clss == -1)
+            mask_cls = torch.logical_not((clss == -1))
             clss[clss == -1] = 0
             setattr(self, "clss", clss.to(device))
             setattr(self, "mask_cls", mask_cls.to(device))
@@ -138,7 +138,6 @@ class Dataloader(object):
             for batch in self.cur_iter:
                 yield batch
             self.cur_iter = self._next_dataset_iterator(dataset_iter)
-
 
     def _next_dataset_iterator(self, dataset_iter):
         try:
